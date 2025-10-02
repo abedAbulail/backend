@@ -141,7 +141,7 @@ app = FastAPI()
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[ "http://localhost:5173"],  # Your React app URL
+    allow_origins=[ "https://whatsapp-automation-landing-pag.onrender.com"],  # Your React app URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -157,7 +157,7 @@ ZIINA_BASE_URL = os.getenv("ZIINA_BASE_URL")
 
 class PaymentRequest(BaseModel):
     amount: float  # In base units (e.g., 1050 for 10.50 AED)
-    currency_code: str = "AED"
+    currency_code: str = "USD"
     message: str
     customer_email: Optional[str] = None
     customer_name: Optional[str] = None
