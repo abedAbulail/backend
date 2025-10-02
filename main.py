@@ -183,9 +183,9 @@ async def create_payment(payment: PaymentRequest):
         "amount": int(payment.amount),  # Must be integer in base units
         "currency_code": payment.currency_code,
         "message": payment.message,
-        "success_url": "http://localhost:3000/payment-success",
-        "cancel_url": "http://localhost:3000/payment-cancel",
-        "failure_url": "http://localhost:3000/payment-failure",
+        "success_url": "https://zuccess.ai",
+        "cancel_url": "https://zuccess.ai",
+        "failure_url": "https://zuccess.ai",
         "allow_tips": payment.allow_tips,
         "test": False,  # Test mode - no real payment needed!
     }
