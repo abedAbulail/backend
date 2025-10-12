@@ -8,8 +8,9 @@ from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer
 from datetime import datetime
 import uuid
-import re
 import hashlib
+import binascii
+import re
 import bcrypt
 import os
 from qdrant_client import QdrantClient
@@ -87,20 +88,93 @@ pwd_context = CryptContext(
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 
-def hash_password(password: str) -> str:
-    """Hash a password using bcrypt"""
-    # Convert password to bytes and hash it
+import json
+import hashlib
+import binascii
+import bcrypt  # موجود بالفعل في كودك
+from fastapi import HTTPException, status
+
+
+# ------------------------------------------------------------------
+# PBKDF2 (no-salt) — نفس اللي تستخدمه في n8n tool
+def hash_password_pbkdf2_nosalt(password: str) -> str:
     password_bytes = password.encode("utf-8")
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password_bytes, salt)
-    return hashed.decode("utf-8")
+    dk = hashlib.pbkdf2_hmac("sha512", password_bytes, b"", 100000, dklen=64)
+    return binascii.hexlify(dk).decode()
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against a hash"""
-    password_bytes = plain_password.encode("utf-8")
-    hashed_bytes = hashed_password.encode("utf-8")
-    return bcrypt.checkpw(password_bytes, hashed_bytes)
+def verify_password_pbkdf2_nosalt(
+    plain_password: str, hashed_password_hex: str
+) -> bool:
+    try:
+        return hash_password_pbkdf2_nosalt(plain_password) == hashed_password_hex
+    except Exception:
+        return False
+
+
+# ------------------------------------------------------------------
+# عام — يفحص نوع الهَاش في DB ويستدعي الطريقة المناسبة
+def extract_hashed_password(stored_value: str) -> str:
+    """
+    Normalize stored value:
+    - If stored_value is JSON string that contains 'hashedPassword', return that.
+    - Otherwise return stored_value as-is.
+    """
+    if not stored_value:
+        return ""
+
+    # If looks like JSON, try parse and extract hashedPassword
+    if (stored_value.startswith("{") and stored_value.endswith("}")) or (
+        "hashedPassword" in stored_value
+    ):
+        try:
+            parsed = json.loads(stored_value)
+            # If it has the field hashedPassword, use it
+            if isinstance(parsed, dict) and "hashedPassword" in parsed:
+                return parsed["hashedPassword"]
+        except Exception:
+            # not valid json, fallback to original
+            pass
+
+    return stored_value
+
+
+def verify_password(plain_password: str, stored_value: str) -> bool:
+    """
+    Verify password against stored_value which can be:
+    - PBKDF2 hex (from n8n)
+    - bcrypt hash string (from old code)
+    - JSON string that includes hashedPassword
+    """
+    if not stored_value:
+        return False
+
+    # normalize
+    hashed = extract_hashed_password(stored_value)
+
+    # 1) If looks like bcrypt (starts with $2), use bcrypt
+    if isinstance(hashed, str) and hashed.startswith("$2"):
+        try:
+            return bcrypt.checkpw(
+                plain_password.encode("utf-8"), hashed.encode("utf-8")
+            )
+        except Exception:
+            return False
+
+    # 2) If hex string length matches PBKDF2-512 (64 bytes -> 128 hex chars)
+    #    pbkdf2 output 64 bytes -> 128 hex chars
+    if (
+        isinstance(hashed, str)
+        and len(hashed) == 128
+        and all(c in "0123456789abcdef" for c in hashed.lower())
+    ):
+        return verify_password_pbkdf2_nosalt(plain_password, hashed)
+
+    # 3) fallback: try direct equality (in case stored something else)
+    return hash_password_pbkdf2_nosalt(plain_password) == hashed
+
+
+# ------------------------------------------------------------------
 
 
 def create_token(data: dict):
@@ -176,15 +250,16 @@ def login(data: Login):
 
     user = res.data[0]
 
-    # Verify password
-    if not verify_password(data.password, user["password"]):
+    stored_password_field = user.get("password")  # هذا اللي مخزن في DB
+
+    # Verify password: uses the new verify_password that handles multiple formats
+    if not verify_password(data.password, stored_password_field):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password"
         )
 
     # Create JWT
     token = create_token({"sub": user["email"]})
-    print(token)
     return {
         "access_token": token,
         "token_type": "bearer",
