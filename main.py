@@ -11,6 +11,7 @@ import uuid
 import hashlib
 import binascii
 import re
+import resend
 import bcrypt
 import os
 from qdrant_client import QdrantClient
@@ -679,3 +680,29 @@ def save(data: KnoledgData):
         .execute()
     )
     return {"message": "true"}
+
+
+@app.post("/publish")
+def publish(authorization: str = Header(...)):
+    token = authorization.replace("Bearer", "").replace("bearer", "").strip()
+
+    user_info = decode_token(token)
+    email = user_info.get("sub")
+
+    if not email:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user= supabase.table("user").select({"id"}).eq("email",email).execute()
+    resend.api_key=os.getenv("RESEND")
+    body={
+        "from":"info@updates.zuccess.ai",
+        "to":"abulailabood7@gmail.com",
+        "subject":"New puplished",
+        "text": f"the user {email} with id = {user.data[0]["id"]} has finished editing"
+
+    }
+    
+
+    email=resend.Emails.send(body)
+    print("email is sent successfully")
+    return user
